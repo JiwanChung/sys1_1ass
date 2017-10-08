@@ -9,11 +9,11 @@
 #include <linux/types.h>
 #include <linux/kprobes.h>
 
-#define EXITING_HIGHER_BOUND 100;
+#define EXITING_HIGHER_BOUND 100
 
 typedef struct proc_exit_item
 {
-	char comm[TASK_COMMLEN];
+	char comm[TASK_COMM_LEN];
 	pid_t pid;
 	pid_t ppid;
 	unsigned int cpu;
@@ -23,10 +23,28 @@ typedef struct proc_exit_item
 
 exit_it_t task_exiting_list[EXITING_HIGHER_BOUND];
 
+unsigned int count=0;
+
 void jdo_task_dead(void)
 {
+	// for iter
+	int i;
+	
+	exit_it_t item;
 	struct task_struct *tsk = current;
         printk("jdead pid:%d\n", tsk->pid);
+	
+	//save info in data structure
+	item.pid = tsk->pid;
+	item.ppid = tsk->real_parent->pid;
+	item.cpu = tsk->cpu;
+	item.exit_time = current_kernel_time64();
+	// copy command name
+	for(i=0; i<TASK_COMM_LEN; i++)
+	{
+		item.comm[i] = tsk->comm[i];
+	}
+	task_exiting_list[count] = item;
 	/* Always end with a call to jprobe_return(). */
 	jprobe_return();
 	/*NOTREACHED*/
@@ -77,6 +95,8 @@ static int __init hw1_init(void)
 {
 	//register jprobe for do_exit
 	int ret;
+	count = 0;
+	
 	my_jexit.kp.symbol_name = "do_exit";
 	
 	if((ret = register_jprobe(&my_jexit)) <0) {

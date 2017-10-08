@@ -869,14 +869,6 @@ deps_/home/jiwan/kernel/module/q2.o := \
   arch/x86/include/asm/insn.h \
   arch/x86/include/asm/inat.h \
   arch/x86/include/asm/inat_types.h \
-  include/trace/events/sched.h \
-  include/linux/tracepoint.h \
-    $(wildcard include/config/have/syscall/tracepoints.h) \
-    $(wildcard include/config/tracepoint.h) \
-  include/linux/binfmts.h \
-  arch/x86/include/asm/exec.h \
-  include/uapi/linux/binfmts.h \
-  include/trace/define_trace.h \
 
 /home/jiwan/kernel/module/q2.o: $(deps_/home/jiwan/kernel/module/q2.o)
 
