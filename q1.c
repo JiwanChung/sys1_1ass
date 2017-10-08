@@ -35,8 +35,9 @@ static int write_process_info(struct seq_file *s)
 	long long unsigned vruntime;
 
 	struct timespec64 boottime;
-	struct timespec64 currenttime = current_kernel_time64();
+	struct timespec64 currenttime;
 
+	getnstimeofday64(&currenttime);
 	// systemwide info
 	for_each_process(task)
 	{
