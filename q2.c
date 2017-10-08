@@ -38,7 +38,7 @@ void jdo_task_dead(void)
 	// update dead_time
 	hash_for_each_possible(exit_hash, tmp, exit_hash_list, tsk->pid)
 	{
-		tmp->dead_time = current_kernel_timespec64();	
+		tmp->dead_time = current_kernel_time64();	
 	}
 	/* Always end with a call to jprobe_return(). */
 	jprobe_return();
@@ -75,6 +75,23 @@ void jdo_exit(long code)
 
 static int write_dead_info(struct seq_file *s)
 {
+	// bucket integer for hash iteration
+	int bkt = 0;
+	// tmp hash node pointer
+	exit_it_t *tmp;
+	// print column names
+	seq_printf(s, "%19s%8s%8s%8s%19s%19s\n", 
+	"command","pid","ppid","cpu","start(s)", "exit(s)");
+
+	// iterate over hash table
+	hash_for_each(exit_hash, bkt, tmp, exit_hash_list)
+	{ 
+		seq_printf(s, "%19s%8d%8d", tmp->comm, tmp->pid, tmp->ppid);
+		seq_printf(s, "%8d", tmp->cpu);
+		//seq_printf(s, "%15d.%03d", start_sec, start_msec);
+		//seq_printf(s, "%15d.%03d", exit_sec, exit_msec);
+		seq_printf(s, "\n");
+	}
 	return 0;
 }
 
@@ -129,7 +146,7 @@ static int __init hw1_init(void)
                my_jdead.kp.addr, my_jdead.entry);
 
 	//init hash table
-	hash_init(exit_hash, BITS);
+	hash_init(exit_hash);
 	
 	//create proc file
 	proc_create("hw1", 0, NULL, &hw1_fops);
