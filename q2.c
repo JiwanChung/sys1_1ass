@@ -8,8 +8,11 @@
 #include <linux/jiffies.h>
 #include <linux/types.h>
 #include <linux/kprobes.h>
+#include <linux/hashtable.h>
+#include <linux/slab.h>
 
 #define EXITING_HIGHER_BOUND 100
+#define BITS 3
 
 typedef struct proc_exit_item
 {
@@ -19,32 +22,19 @@ typedef struct proc_exit_item
 	unsigned int cpu;
 	struct timespec64 exit_time;
 	struct timespec64 dead_time;
+	struct hlist_node exit_hash_list;
 } exit_it_t;	
 
-exit_it_t task_exiting_list[EXITING_HIGHER_BOUND];
-
-unsigned int count=0;
+DEFINE_HASHTABLE(exit_hash, BITS);
 
 void jdo_task_dead(void)
 {
-	// for iter
-	int i;
 	
-	exit_it_t item;
 	struct task_struct *tsk = current;
         printk("jdead pid:%d\n", tsk->pid);
 	
-	//save info in data structure
-	item.pid = tsk->pid;
-	item.ppid = tsk->real_parent->pid;
-	item.cpu = tsk->cpu;
-	item.exit_time = current_kernel_time64();
-	// copy command name
-	for(i=0; i<TASK_COMM_LEN; i++)
-	{
-		item.comm[i] = tsk->comm[i];
-	}
-	task_exiting_list[count] = item;
+	// update dead_time
+	
 	/* Always end with a call to jprobe_return(). */
 	jprobe_return();
 	/*NOTREACHED*/
@@ -53,7 +43,24 @@ void jdo_task_dead(void)
 void jdo_exit(long code)
 {
 	struct task_struct *tsk = current;
-	printk("jexit pid:%d\n", tsk->pid);
+
+	exit_it_t *it1;
+
+	it1 = kmalloc(sizeof *it1, GFP_KERNEL);
+	if (!it1) {
+		printk("Can't allocate mem");
+		return;
+	}
+	//save info in data structure
+	it1->pid = tsk->pid;
+	it1->ppid = tsk->real_parent->pid;
+	it1->cpu = tsk->cpu;
+	it1->exit_time = current_kernel_time64();
+	// copy command name
+	memcpy(it1->comm, tsk->comm, TASK_COMM_LEN);
+
+	hash_add(exit_hash, &it1->exit_hash_list, it1->pid);
+	
 	/* Always end with a call to jprobe_return(). */
         jprobe_return();
         /*NOTREACHED*/	
@@ -95,7 +102,6 @@ static int __init hw1_init(void)
 {
 	//register jprobe for do_exit
 	int ret;
-	count = 0;
 	
 	my_jexit.kp.symbol_name = "do_exit";
 	
