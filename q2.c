@@ -29,12 +29,17 @@ DEFINE_HASHTABLE(exit_hash, BITS);
 
 void jdo_task_dead(void)
 {
-	
 	struct task_struct *tsk = current;
+	
+	exit_it_t *tmp;
+
         printk("jdead pid:%d\n", tsk->pid);
 	
 	// update dead_time
-	
+	hash_for_each_possible(exit_hash, tmp, exit_hash_list, tsk->pid)
+	{
+		tmp->dead_time = current_kernel_timespec64();	
+	}
 	/* Always end with a call to jprobe_return(). */
 	jprobe_return();
 	/*NOTREACHED*/
@@ -45,6 +50,8 @@ void jdo_exit(long code)
 	struct task_struct *tsk = current;
 
 	exit_it_t *it1;
+
+	printk("jexit pid:%d\n", tsk->pid);
 
 	it1 = kmalloc(sizeof *it1, GFP_KERNEL);
 	if (!it1) {
@@ -121,7 +128,9 @@ static int __init hw1_init(void)
 	printk("Planted jdead at %p, handler addr %p\n",
                my_jdead.kp.addr, my_jdead.entry);
 
-
+	//init hash table
+	hash_init(exit_hash, BITS);
+	
 	//create proc file
 	proc_create("hw1", 0, NULL, &hw1_fops);
 	return 0;
