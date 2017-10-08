@@ -1,0 +1,1 @@
+cmd_/home/jiwan/kernel/module/procfs1.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /home/jiwan/kernel/module/procfs1.ko /home/jiwan/kernel/module/procfs1.o /home/jiwan/kernel/module/procfs1.mod.o ;  true

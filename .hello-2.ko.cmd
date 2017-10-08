@@ -1,0 +1,1 @@
+cmd_/home/jiwan/kernel/module/hello-2.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /home/jiwan/kernel/module/hello-2.ko /home/jiwan/kernel/module/hello-2.o /home/jiwan/kernel/module/hello-2.mod.o ;  true

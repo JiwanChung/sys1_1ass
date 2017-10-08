@@ -1,0 +1,6 @@
+kernel//home/jiwan/kernel/module/hello-1.ko
+kernel//home/jiwan/kernel/module/hello-2.ko
+kernel//home/jiwan/kernel/module/procfs1.ko
+kernel//home/jiwan/kernel/module/hw1.ko
+kernel//home/jiwan/kernel/module/q1.ko
+kernel//home/jiwan/kernel/module/q2.ko
