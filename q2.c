@@ -8,7 +8,7 @@
 #include <linux/jiffies.h>
 #include <linux/types.h>
 #include <linux/kprobes.h>
-#include <linux/hashtable.h>
+#include <linux/list.h>
 #include <linux/slab.h>
 #include <asm/uaccess.h>
 
@@ -46,9 +46,7 @@ static int write_process_info(struct seq_file *s)
 	long long unsigned vruntime;
 
 	struct timespec64 boottime;
-	struct timespec64 currenttime;
 
-	getnstimeofday64(&currenttime);
 	// systemwide info
 	for_each_process(task)
 	{
@@ -77,9 +75,9 @@ static int write_process_info(struct seq_file *s)
 	seq_printf(s, "CURRENT SYSTEM INFORMATION >\n");
 	seq_printf(s, "Total %d task, %d running, %d sleeping, %d stopped, %d zombies\n", 
 	task_count, running_count, sleeping_count, stopped_count, zombie_count);
-	getboottime64(&boottime);
+	get_monotonic_boottime64(&boottime);
 	seq_printf(s, "%dHz, %llu ms after system boot time\n", HZ, 
-		(timespec_to_ns(&currenttime) - timespec_to_ns(&boottime))/BY_MS);
+		(timespec_to_ns(&boottime))/BY_MS);
 
 	print_bar(s);
 	
@@ -246,73 +244,72 @@ typedef struct proc_exit_item
 	pid_t pid;
 	pid_t ppid;
 	unsigned int cpu;
-	struct timespec64 exit_time;
-	struct timespec64 dead_time;
-	bool if_exited;
-	struct hlist_node exit_hash_list;
+	u64 start_time;
+	u64 dead_time;
+	struct list_head exit_head;
 } exit_it_t;	
 
-DEFINE_HASHTABLE(exit_hash, BITS);
+static LIST_HEAD(exit_list);
 
 char emit_flag;
+bool probe_flag;
+
+static int flush_list(void)
+{
+	exit_it_t *tmp, *n;
+
+	//flush list
+	list_for_each_entry_safe(tmp, n, &exit_list, exit_head)
+	{
+		list_del(&tmp->exit_head);
+		kfree(tmp);
+	}
+
+	return list_empty(&exit_list);
+}
 
 void jdo_task_dead(void)
 {
 	struct task_struct *tsk = current;
+	struct timespec64 ts;
 	
-	exit_it_t *tmp;
+	exit_it_t *it1;
 
-	// update dead_time
-	hash_for_each_possible(exit_hash, tmp, exit_hash_list, tsk->pid)
+	if (probe_flag)
 	{
-		if(!tmp->if_exited)
-		{
-			getnstimeofday64(&(tmp->dead_time));
-			tmp->if_exited = true;
+		// allocate mem for list node
+		it1 = kmalloc(sizeof *it1, GFP_KERNEL);
+		if (!it1) {
+			printk("Can't allocate mem");
+			return;
 		}
+		//save info in data structure
+		it1->pid = tsk->pid;
+		it1->ppid = tsk->real_parent->pid;
+		it1->cpu = tsk->cpu;
+		it1->start_time = tsk->real_start_time;	
+		get_monotonic_boottime64(&ts);
+		it1->dead_time = timespec_to_ns(&ts);
+		// copy command name
+		memcpy(it1->comm, tsk->comm, TASK_COMM_LEN);
+		// init list head
+		INIT_LIST_HEAD(&it1->exit_head);
+
+		//add in the list
+		list_add_tail(&it1->exit_head, &exit_list);		
 	}
+
 	/* Always end with a call to jprobe_return(). */
 	jprobe_return();
 	/*NOTREACHED*/
 }
 
-void jdo_exit(long code)
-{
-	struct task_struct *tsk = current;
-
-	exit_it_t *it1;
-
-	// allocate mem for hash node
-	it1 = kmalloc(sizeof *it1, GFP_KERNEL);
-	if (!it1) {
-		printk("Can't allocate mem");
-		return;
-	}
-	//save info in data structure
-	it1->pid = tsk->pid;
-	it1->ppid = tsk->real_parent->pid;
-	it1->cpu = tsk->cpu;
-	getnstimeofday64(&(it1->exit_time));
-	// copy command name
-	memcpy(it1->comm, tsk->comm, TASK_COMM_LEN);
-	
-	it1->if_exited = false;
-	// add node
-	hash_add(exit_hash, &it1->exit_hash_list, it1->pid);
-	
-	/* Always end with a call to jprobe_return(). */
-        jprobe_return();
-        /*NOTREACHED*/	
-}
-
 static int write_dead_info(struct seq_file *s)
 {
-	// bucket integer for hash iteration
-	int bkt = 0;
-	// tmp hash node pointer
+	// tmp list node pointer
 	exit_it_t *tmp;
 	// time vars
-	unsigned int nsec_exit, nsec_dead, exit_start_s, exit_start_ms, dead_start_s, dead_start_ms;
+	unsigned int start_s, start_ms, dead_s, dead_ms;
 
 	// print column names
 	print_bar(s);
@@ -321,29 +318,25 @@ static int write_dead_info(struct seq_file *s)
 	print_bar(s);
 	
 	// iterate over hash table
-	hash_for_each(exit_hash, bkt, tmp, exit_hash_list)
+	list_for_each_entry(tmp, &exit_list, exit_head)	
 	{ 
 		// time vars
-		nsec_exit = timespec_to_ns(&(tmp->exit_time));
-		exit_start_s = nsec_exit/BY_S;
-		exit_start_ms = nsec_exit/BY_MS - exit_start_s*BY_M;
-		nsec_dead = timespec_to_ns(&(tmp->dead_time));
-		dead_start_s = nsec_dead/BY_S;
-		dead_start_ms = nsec_dead/BY_MS - dead_start_s*BY_M;			
+		start_s = tmp->start_time/BY_S;
+		start_ms = tmp->start_time/BY_MS - start_s*BY_M;
+		dead_s = tmp->dead_time/BY_S;
+		dead_ms = tmp->dead_time/BY_MS - dead_s*BY_M;			
 
 		// print
 		seq_printf(s, "%19s%8d%8d", tmp->comm, tmp->pid, tmp->ppid);
 		seq_printf(s, "%8d", tmp->cpu);
-		seq_printf(s, "%15d.%03d", exit_start_s, exit_start_ms);
-		seq_printf(s, "%15d.%03d", dead_start_s, dead_start_ms);
+		seq_printf(s, "%15d.%03d", start_s, start_ms);
+		seq_printf(s, "%15d.%03d", dead_s, dead_ms);
 		seq_printf(s, "\n");
 	}
+	
+	flush_list();	
 	return 0;
 }
-
-static struct jprobe my_jexit = {
-        .entry = JPROBE_ENTRY(jdo_exit)
-};
 
 static struct jprobe my_jdead = {
         .entry = JPROBE_ENTRY(jdo_task_dead)
@@ -378,17 +371,7 @@ static int hw1_open(struct inode *inode, struct file *file)
 
 static int start_jprobing(void)
 {
-	//register jprobe for do_exit
 	int ret;
-
-	my_jexit.kp.symbol_name = "do_exit";
-	
-	if((ret = register_jprobe(&my_jexit)) <0) {
-		printk("register_jexit failed, returned %d\n", ret);
-                return -1;
-	}
-	printk("Planted jexit at %p, handler addr %p\n",
-               my_jexit.kp.addr, my_jexit.entry);
 
 	// regitster jprobe for do_task_dead
 	my_jdead.kp.symbol_name = "do_task_dead";
@@ -400,21 +383,27 @@ static int start_jprobing(void)
 	printk("Planted jdead at %p, handler addr %p\n",
                my_jdead.kp.addr, my_jdead.entry);
 
-	hash_init(exit_hash);	
 	return 0;	
 }
 
 static int stop_jprobing(void)
 {
-	//unregister jprobe
-	unregister_jprobe(&my_jexit);
-        printk("jexit unregistered\n");
-	//unregister jprobe
-	unregister_jprobe(&my_jdead);
-        printk("jdead unregistered\n");
-	
-	printk(KERN_ALERT "EMTPY? :%d\n", hash_empty(exit_hash));	
+	probe_flag = false;
+		
 	return 0;
+}
+
+static int init_mod_B(void)
+{
+	probe_flag = true;
+	
+	return 0;
+}
+
+static int stop_mod_B(void)
+{
+	flush_list();
+	return stop_jprobing();
 }
 
 static ssize_t hw1_write(struct file *file, const char __user *buf,
@@ -433,9 +422,9 @@ static ssize_t hw1_write(struct file *file, const char __user *buf,
 	{
 		emit_flag = Message[0];
 		if( emit_flag == 'E')
-			start_jprobing();
+			init_mod_B();
 		else
-			stop_jprobing();
+			stop_mod_B();
 	}
 		
 	return i;	
@@ -456,11 +445,11 @@ static int __init hw1_init(void)
 	
 	// init with mode B	
 	emit_flag = 'E';
+	init_mod_B();
+
+	// start probing
 	start_jprobing();
 
-	//init hash table
-	hash_init(exit_hash);
-	
 	//create proc file
 	proc_create("hw1", 0, NULL, &hw1_fops);
 	return 0;
@@ -469,8 +458,12 @@ static int __init hw1_init(void)
 static void __exit hw1_exit(void)
 {
 	if ( emit_flag == 'E') {
-		stop_jprobing();
+		stop_mod_B();
 	}
+	// unregister jprobe
+	unregister_jprobe(&my_jdead);
+	printk("unregistered jdead");
+
 	//remove proc file
 	remove_proc_entry("hw1", NULL);
 }
